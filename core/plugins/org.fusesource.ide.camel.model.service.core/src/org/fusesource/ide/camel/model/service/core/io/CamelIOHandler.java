@@ -12,11 +12,14 @@ package org.fusesource.ide.camel.model.service.core.io;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.parsers.SAXParser;
+import javax.xml.parsers.SAXParserFactory;
 import javax.xml.transform.OutputKeys;
 import javax.xml.transform.Result;
 import javax.xml.transform.Source;
@@ -25,11 +28,13 @@ import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
 
+import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.Path;
 import org.fusesource.ide.camel.model.service.core.internal.CamelModelServiceCoreActivator;
+import org.fusesource.ide.camel.model.service.core.internal.io.SAXHandlerWithLineNumber;
 import org.fusesource.ide.camel.model.service.core.model.CamelContextElement;
 import org.fusesource.ide.camel.model.service.core.model.CamelFile;
 import org.fusesource.ide.foundation.core.util.CamelUtils;
@@ -46,6 +51,7 @@ public class CamelIOHandler {
     protected static final int INDENTION_VALUE 	= 3;
     protected static final String CAMEL_CONTEXT = "camelContext";
     protected static final String CAMEL_ROUTES  = "routes";
+	public static final String LINE_NUMBER_ATT_NAME = "LINE_NUMBER_ATT_NAME";
     
     private Document document;
 
@@ -65,9 +71,7 @@ public class CamelIOHandler {
 				return null;
 			}
 
-			DocumentBuilder db = createDocumentBuilder();
-	        document = db.parse(xmlFile);
-	        cf = readDocumentToModel(document, res);
+			return loadCamelModel(xmlFile, monitor);
 		} catch (Exception ex) {
 			ex.printStackTrace();
 			CamelModelServiceCoreActivator.pluginLog().logError("Error loading Camel XML file from " + res.getFullPath().toOSString(), ex);
@@ -88,9 +92,20 @@ public class CamelIOHandler {
 
 		CamelFile cf = null;
     	try {
-			DocumentBuilder db = createDocumentBuilder();
-	        document = db.parse(xmlFile);
-	        cf = readDocumentToModel(document, ResourcesPlugin.getWorkspace().getRoot().getFileForLocation(new Path(xmlFile.getPath())));
+			SAXParser parser;
+			try {
+				SAXParserFactory factory = SAXParserFactory.newInstance();
+				parser = factory.newSAXParser();
+				DocumentBuilder docBuilder = createDocumentBuilder();
+				document = docBuilder.newDocument();
+			} catch (ParserConfigurationException e) {
+				throw new RuntimeException("Can't create SAX parser / DOM builder.", e);
+			}
+
+			parser.parse(xmlFile, new SAXHandlerWithLineNumber(document));
+
+	        IFile documentLocation = ResourcesPlugin.getWorkspace().getRoot().getFileForLocation(new Path(xmlFile.getPath()));
+			cf = readDocumentToModel(document, documentLocation);
 		} catch (Exception ex) {
 			CamelModelServiceCoreActivator.pluginLog().logError("Error loading Camel XML file from " + xmlFile.getPath(), ex);
 		}
@@ -109,7 +124,7 @@ public class CamelIOHandler {
     	CamelFile reloadedModel = null;
     	try {
 			DocumentBuilder db = createDocumentBuilder();
-	        document = db.parse(new ByteArrayInputStream(text.getBytes()));
+			document = db.parse(new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)));
 			reloadedModel = readDocumentToModel(document, cf.getResource());
 		} catch (Exception ex) {
 			ex.printStackTrace();
